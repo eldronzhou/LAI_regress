@@ -1,447 +1,182 @@
-#include "lai_regress.h"
 #include "linear.h"
-#include <assert.h>
-#include <sstream>
-#include <cstdio>
-#include <cstdlib>
-#include <zlib.h>
-#include <cstring>
+#include "lai_regress.h"
 #include "cblas.h"
-#include "math.h"
+#include <limits>
+#include <cmath>
+#include "t_distribution.hpp"
 
 using std::cout; using std::endl; using std::ifstream;
 using std::string; using std::getline;
 
-
-// get n_snp and n_ind
-void get_size_vcf(const string &pheno_path, const string &geno_path, Dat *dat) {
-    size_t n_ind = 0;
-    size_t n_invalid = 0;
-    size_t n_snp = 0;
-
-    string line;
-    ifstream infile1(pheno_path.c_str());
-    string id;
-    string y;
-    size_t i = 0;
-    while (infile1 >> id >> id >> y) {
-	try {
-	    std::stod(y); 
-	    dat->ind_idx.push_back(i);
-	    n_ind++;
-	}
-	catch (std::invalid_argument&) {
-	    n_invalid++;
-	}
-	i++;
-    }
-    dat->n_ind = n_ind;
-    cout << "Warning: " + std::to_string(n_invalid) + \
-	" individuals with invalid phenotypes." << endl;
-
-    gzFile infile2 = gzopen(geno_path.c_str(), "rb");
-
-    char buffer[4096];
-
-    while (gzgets(infile2, buffer, 4096)) {
-	// Remove the newline character if it exists
-        size_t length = strlen(buffer);
-	line.append(buffer);
-        if (length > 0 && buffer[length - 1] != '\n') {
-	    continue;
-        }
-
-	if (line.find("##") == 0) {
-	    line.clear();
-        }
-        else if (line.find("#") == 0) {
-	    line.clear();
-        }
-        else {
-            line.clear();
-	    n_snp++;
-        }
-    }
-
-    gzclose(infile2);
-
-    /*ifstream infile2(geno_path.c_str());
-    while(getline(infile2, line)) {
-	if (line.find("##") == 0) {
-	    continue;
-	}
-	else if (line.find("#") == 0) {
-	    continue;
-	}
-	else {
-	    n_snp++;	
-	}
-    }*/
-
-    dat->n_snp = n_snp;
-    cout << "In total " + std::to_string(n_snp) + " SNPs and " \
-	+ std::to_string(n_ind) + " individuals to be readed." << endl;
+extern "C" {
+    void dgeqrf_(int* m, int* n, double* A, int* lda, double* tau, double* work, int* lwork, int* info);
+    void dormqr_(char* side, char* trans, int* m, int* n, int* k, double* A, int* lda,
+                 double* tau, double* C, int* ldc, double* work, int* lwork, int* info);
 }
 
-void read_pheno(const std::string &pheno_path, Dat *dat) {
-    ifstream infile(pheno_path.c_str());
+void process_cov(Dat *dat) {
+    int n = dat->n_ind;
+    int p = dat->n_cov;
 
-    cout << "Reading phenotype file from: " + pheno_path + "." << endl;
+    int info;
+    int lwork = -1;
+    double wkopt;
 
-    string id;
-    string y;
-    double *pheno = (double *) malloc(dat->n_ind*sizeof(double));
+    // W = QR
+    double* tau = (double*) malloc(p * sizeof(double));
+    dgeqrf_(&n, &p, dat->W, &n, tau, &wkopt, &lwork, &info);
 
-    size_t i = 0, idx = 0;
-    while (infile >> id >> id >> y) {
-	if (i == dat->ind_idx[idx]) {
-	    pheno[idx] = stod(y);
-	    idx++;
-	}
-	i++;
+    lwork = (int)wkopt;
+    double* work = (double*) calloc(lwork, sizeof(double));
+
+    dgeqrf_(&n, &p, dat->W, &n, tau, work, &lwork, &info);
+
+    // Qt y
+    double *Qty = (double*) calloc(dat->n_ind, sizeof(double));
+    for (size_t i=0; i<n; i++) {
+        Qty[i] = dat->pheno[i];
     }
-    dat->pheno = pheno;
 
-    cout << "Readed phenotype from " + std::to_string(idx) + " individuals." << endl;
+    char side = 'L';   // Apply from the left
+    char trans = 'T';  // Q^T
+    int nrhs = 1;
+    dormqr_(&side, &trans, &n, &nrhs, &p, dat->W, &n, tau, Qty, &n, work, &lwork, &info);
+
+    // Q Qt y
+    trans = 'N';
+    for (size_t i=p; i<n; i++) {
+	Qty[i] = 0;
+    }
+    dormqr_(&side, &trans, &n, &nrhs, &p, dat->W, &n, tau, Qty, &n, work, &lwork, &info);
+    
+    for (size_t i=0; i<n; i++) {
+        Qty[i] = dat->pheno[i] - Qty[i];
+    }
+
+    dat->Qty = Qty;
+    dat->work = work;
+    dat->lwork = lwork;
+    dat->tau = tau;
 }
 
-void read_cov(const std::string &cov_path,  Dat *dat) {
-    ifstream infile(cov_path.c_str());
+void linear(Dat *dat, double *X, double *Xr) {
+    int n = dat->n_ind;
+    int p = dat->n_cov;
+    int lwork = dat->lwork;
+    int info;
 
-    cout << "Reading covariate file from: " + cov_path + "." << endl;
-
-    size_t n_cov = 0, i = 0, idx = 0;
-
-    string line, token;
-
-    while (getline(infile, line)) {
-	n_cov = 0;
-	std::istringstream iss(line);
-	if (i == 0) {
-	    while (getline(iss, token, '\t')) {
-		n_cov++;
-	    }
-	    cout << "Reading " + std::to_string(n_cov) + " covariates." << endl;
-	    dat->n_cov = n_cov;
-	    dat->W = (double *) malloc(dat->n_ind*n_cov*sizeof(double));
-	    n_cov = 0;
-	    iss.clear();
-	    iss.str(line);
-	}
-	if (i == dat->ind_idx[idx]) {
-	    while (getline(iss, token, '\t')) {
-		dat->W[n_cov*dat->n_ind+idx] = stod(token); // n by p but lapack uses column major
-		n_cov++;
-	    }
-	    idx++;
-	}
-	i++;
+    // QtX overwrite X
+    char side = 'L';   // Apply from the left
+    char trans = 'T';  // Q^T
+    int nrhs = 2;
+    dormqr_(&side, &trans, &n, &nrhs, &p, dat->W, &n, dat->tau, X, &n, dat->work, &lwork, &info);
+    
+    // Q QtX overwrite QtX
+    trans = 'N';
+    for (size_t i=p; i<n; i++) {
+        X[i] = 0;
+	X[n+i] = 0;
     }
-    infile.close();
+    dormqr_(&side, &trans, &n, &nrhs, &p, dat->W, &n, dat->tau, X, &n, dat->work, &lwork, &info);
+
+    // Xr = X - Q Qt X
+    double tmp = 0;
+    for (size_t i=0; i<2*n; i++) {
+	tmp = Xr[i];
+        Xr[i] -= X[i];
+	X[i] = tmp;
+    }
+
+    // Xr^t Xr \beta = Xr^t yr
+    double XtX[4] = {0,0,0,0};
+    double Xty[2] = {0,0}; 
+    cblas_dsyrk(CblasColMajor, CblasUpper, CblasTrans, 2, n,
+            1.0, Xr, n, 0.0, XtX, 2);
+    cblas_dgemv(CblasColMajor, CblasTrans, n, 2,
+            1.0, Xr, n, dat->Qty, 1, 0.0, Xty, 1);
+
+    // Solve for beta1 and beta2
+    double a = XtX[0]; double b = XtX[2]; // Note column major and upper
+    double c = b; double d = XtX[3];
+    double e = Xty[0]; double f = Xty[1];
+    
+    double det = a*d - b*c;
+
+    // check mac
+    double mac1 = 0, mac2 = 0;
+    for (size_t i=0; i<n; i++) {
+	mac1 += X[i];
+    }
+    for (size_t i=0; i<n; i++) {
+        mac2 += X[n+i];
+    }
+    
+    if (mac1 > n / 2) {
+        mac1 = n - mac1;
+    }
+
+      
+    if (mac1 > n / 2) {
+        mac2 = n - mac2;
+    }
+
+    double beta1 = 0, beta2 = 0;
+    if (mac1 < 20) {
+	beta2 = f / d;
+    }
+    else if (mac2 < 20) {
+	beta1 = e / a;
+    }
+    else {
+        beta1 = (d*e - b*f) / det;
+	beta2 = (-c*e + a*f) / det;
+    }
+
+    double sigma2 = 0, r = 0;
+    for (size_t i=0; i<n; i++) {
+	r = dat->Qty[i] - X[i] * beta1 - X[i+n] * beta2;
+	sigma2 += r * r;
+    }
+
+    double se1 = 0, se2 = 0, nu = 0;
+    if (mac1 < 20) {
+        sigma2 /= n - p - 1;
+	se2 = sqrt(sigma2 / d);
+	se1 = std::numeric_limits<double>::quiet_NaN();
+	beta1 = std::numeric_limits<double>::quiet_NaN();
+	nu = n - p - 1;
+    }
+    else if (mac2 < 20) {
+	sigma2 /= n - p - 1;
+	se1 = sqrt(sigma2 / a);
+	se2 = std::numeric_limits<double>::quiet_NaN();
+	beta2 = std::numeric_limits<double>::quiet_NaN();
+	nu = n - p - 1;
+    }
+    else {
+        sigma2 /= n - p - 2;
+	se1 = sqrt(sigma2 * d / det);
+	se2 = sqrt(sigma2 * a / det);
+	nu = n - p - 2;
+    }
+
+    double t1 = beta1 / se1;
+    double t2 = beta2 / se2;
+    double p1 = t_distribution::two_tailed_p(t1, nu); 
+    double p2 = t_distribution::two_tailed_p(t2, nu);
+    double diff = beta1 - beta2;
+    double se_diff = sqrt(sigma2 * (a + d + b + c) / det);
+    double z_diff = diff / se_diff;
+    double p_diff = t_distribution::chi2_pvalue(z_diff*z_diff, 1);
+
+    dat->beta1.push_back(beta1);
+    dat->se1.push_back(se1);
+    dat->beta2.push_back(beta2);
+    dat->se2.push_back(se2); 
+    dat->p1.push_back(p1);
+    dat->p2.push_back(p2);
+    dat->se_diff.push_back(se_diff); 
+    dat->p_diff.push_back(p_diff);
 }
 
-void read_lanc(const std::string &vcf_path,  const std::string &msp_path, int anc, Dat *dat, const std::string &out_path) {
-    
-    string line1, line2;
-    string token1, token2;
 
-    ifstream mspfile(msp_path.c_str());
-    cout << "Reading RFmix msp file from: " + msp_path + "." << endl;
-    
-    //ifstream infile(vcf_path.c_str());
-    //cout << "Reading VCF file from: " + vcf_path + "." << endl;
-    gzFile infile = gzopen(vcf_path.c_str(), "rb");
-    char buffer[4096];
-
-    // skip first two lines of msp file
-    getline(mspfile, line1);
-    getline(mspfile, line1);
-
-    // skip the header of vcf file
-    int n_ind = 0;
-    while (gzgets(infile, buffer, 4096)) {
-        line2.append(buffer);
-	size_t length = strlen(buffer);
-        if (length > 0 && buffer[length - 1] != '\n') {
-	    continue;
-        }
-
-	if (line2.find("##") == 0) {
-	    line2.clear();
-	    continue;
-	}
-	else if (line2.find("#") == 0) {
-	    int idx_2 = 0;
-	    std::istringstream iss2(line2);
-	    while (getline(iss2, token2, '\t')) {
-		idx_2++;
-	    }
-	    n_ind = idx_2 - 9;
-	    line2.clear();
-	}
-	else {
-	    break;
-	}
-    }
-
-    int *hap_lanc = (int *) malloc(2*n_ind*sizeof(int));
-    unsigned spos = 0, epos = 0, pos = 0;
-    int chr_vcf = 1, chr_msp = 1;
-    
-    // read the pos from the first line of vcf file
-    std::istringstream iss2(line2);
-    int idx2 = 0;
-    for (; idx2<9; idx2++) {
-	getline(iss2, token2, '\t');
-	if (idx2 == 0) {
-	   if (token2.find("chr") == 0) {
-               chr_vcf = std::stoi(token2.substr(3));
-	   }
-	   else { 
-	       chr_vcf = std::stoi(token2);
-	   }
-	}
-	if (idx2 == 1) {
-	    pos = std::stoul(token2);
-	}
-    }
-
-    size_t idx_snp = 0;
-    double *X = (double *) calloc(2*dat->n_ind, sizeof(double));
-    double *Xr = (double *) calloc(2*dat->n_ind, sizeof(double));
-
-    while (getline(mspfile, line1)) {
-	// read msp file
-	std::istringstream iss1(line1);
-	for (int idx1=0; idx1<2*n_ind+6; idx1++) {
-	    getline(iss1, token1, '\t'); 
-	    if (idx1 == 0) {
-	        if (token1.find("chr") == 0) {
-	            chr_msp = std::stoi(token1.substr(3));
-		}
-		else {
-		   chr_msp = std::stoi(token1);
-		}
-	    }
-	    else if (idx1 == 1) {
-		spos = std::stoul(token1);
-	    }
-	    else if (idx1 == 2) {
-		epos = std::stoul(token1);
-	    }
-	    else if (idx1 >= 6) {
-		hap_lanc[idx1-6] = std::stoi(token1);
-		if (hap_lanc[idx1-6] != 0 && hap_lanc[idx1-6] != 1 && hap_lanc[idx1-6] != 2) {
-		    cout << "MSP field must be either 0, 1 or 2." << endl;
-		    return;
-		}
-	    }
-	}
-
-	if ((chr_vcf != chr_msp) || (pos < spos) || (pos > epos)) {
-	    cout << "Inconsistent starting position: chr_vcf: " + std::to_string(chr_vcf) + \
-		" chr_msp: " + std::to_string(chr_msp) + " pos: " + \
-		std::to_string(pos) + " spos: " + std::to_string(spos) + " epos: " + std::to_string(spos) << endl;
-	    exit(EXIT_FAILURE);
-	} 
-	     
-	// read vcf file
-	while ((chr_vcf == chr_msp && pos >= spos && pos <= epos) || idx_snp == dat->n_snp-1) {
-	    // reset the stream
-	    std::istringstream iss2(line2);
-
-	    size_t k = 0;
-	    for (idx2=0; idx2<n_ind+9; idx2++) {
-		getline(iss2, token2, '\t');
-
-		if (idx2 == 0) {
-		    dat->chr.push_back(token2);
-		}
-
-		if (idx2 == 1) {
-		    dat->pos.push_back(token2);
-		}
-
-		if (idx2 == 2) {
-		    dat->id.push_back(token2);
-		}
-
-		if (idx2 == 3) {
-		    dat->ref.push_back(token2);
-		}
-
-		if (idx2 == 4) {
-		    dat->alt.push_back(token2);
-		}
-
-		if (idx2 >= 9) {
-
-		    // individuals kept in analysis
-		    if (idx2-9 != dat->ind_idx[k]) {
-			continue;
-		    }
-
-		    // check phasing
-		    if (token2[1] != '|') {
-			cout << "Genotype must be phased." << endl;
-			return;
-		    }
-		    
-		    // read the genotype
-		    if (token2[0] == '.' || token2[3] == '.') {
-			cout << "Missing genotype not supported yet." << endl;
-			return;
-		    }
-		    if (hap_lanc[2*(idx2-9)] == anc) {
-			X[k] += std::stod(&token2[0]);
-		    }
-		    else {
-			X[dat->n_ind+k] += std::stod(&token2[0]);
-		    }
-
-		    if (hap_lanc[2*(idx2-9)+1] == anc) {
-			X[k] += std::stod(&token2[2]);
-		    }
-		    else  {
-			X[dat->n_ind+k] += std::stod(&token2[2]);
-		    }
-		    k++;
-		}
-	    }
-
-	    /*if (idx_snp == 786) {
-	       std::ofstream out("./X.txt");
-	       for (size_t i=0; i<2*dat->n_ind; i++) {
-		       out << X[i] << " " << endl;
-	       }
-	       cout << "Done!" << endl;
-	       out.close();
-	       memcpy(Xr, X, 2*dat->n_ind*sizeof(double));
-	       linear(dat, X, Xr);
-	       return;
-	    }*/
-
-	    memcpy(Xr, X, 2*dat->n_ind*sizeof(double));
-
-	    //regress here
-	    linear(dat, X, Xr);
-
-	    if (idx_snp % 10000 == 0) {
-               cout << idx_snp << endl;
-	    }
-
-	    // read the next line of vcf and update pos
-	    assert(idx2 == n_ind+9);
-	  
-	    memset(X, 0, 2*dat->n_ind*sizeof(double));
-	    line2.clear();
-
-	    if (gzgets(infile, buffer, 4096)) {
-		size_t length = strlen(buffer);
-		line2.append(buffer);
-		while (length > 0 && buffer[length - 1] != '\n') {
-		    gzgets(infile, buffer, 4096);
-		    length = strlen(buffer);
-		    line2.append(buffer);
-		}
-
-		iss2.clear();
-		iss2.str(line2);
-		for (idx2=0; idx2<9; idx2++) {
-		    getline(iss2, token2, '\t');
-		    if (idx2 == 0) {
-			if (token2.find("chr") == 0) {
-			   chr_vcf = std::stoi(token2.substr(3));
-			}
-			else {
-		            chr_vcf = std::stoi(token2);
-			}
-		    }
-		    if (idx2 == 1) {
-			pos = std::stoul(token2);
-		    }
-		}
-		idx_snp++;
-	    }
-	    else {
-		break;
-	    }
-	}	
-    }
-    
-    cout << "Analyzed " << std::to_string(idx_snp+1) << \
-	" SNPs from " << std::to_string(dat->n_ind) << " individuals." << endl;
-    free(hap_lanc);
-    gzclose(infile);
-
-    free(X);
-    free(Xr);
-
-    // write to the output
-    std::ofstream out(out_path);
-    out << "id" << "\t" << "chr" << "\t" << "pos" << "\t" << "ref" << "\t" << "alt" << "\t" \
-            << "beta1" << "\t" << "se1" << "\t" << "beta2" << "\t" << "se2" << "\t" \
-            << "p1" << "\t" << "p2" << "\t" << "se_diff" << "\t" << "p_diff" << endl;
-    for (size_t i=0; i<dat->n_snp; i++) {    
-        out << dat->id[i] << "\t" << dat->chr[i] << dat->pos[i] << "\t" << "\t" << dat->ref[i] << "\t" \
-        << dat->alt[i] << "\t" << dat->beta1[i] << "\t" << dat->se1[i] << "\t" << dat->beta2[i] \
-	<< "\t" << dat->se2[i] << "\t" << dat->p1[i] << "\t" << dat->p2[i] << "\t" << \
-	dat->se_diff[i] << "\t" << dat->p_diff[i] << endl;
-    }
-    out.close();
-}
-
-int main(int argc, char *argv[]) {
-
-    std::string vcf_path, pheno_path, covar_path, msp_path, out_path;
-
-    int i = 1, anc = 0;
-    while (i < argc) {
-        if (strcmp(argv[i], "-vcf") == 0) {
-            vcf_path = argv[i+1];
-            i += 2;
-        }
-	else if (strcmp(argv[i], "-pheno") == 0) {
-	    pheno_path = argv[i+1];
-	    i += 2;
-	}
-	else if (strcmp(argv[i], "-covar") == 0) {
-	    covar_path = argv[i+1];
-	    i += 2;
-	}
-	else if (strcmp(argv[i], "-anc") == 0) {
-	   anc = std::stoi(argv[i+1]);
-	   i += 2;
-	}
-        else if (strcmp(argv[i], "-msp") == 0) {
-            msp_path = argv[i+1];
-            i += 2;
-        }
-        else if (strcmp(argv[i], "-out") == 0) {
-            out_path = argv[i+1];
-            i += 2;
-        }
-        else {
-            cout << "Invalid option: " << argv[i] << endl;
-            return 0;
-        }
-    }
-
-    Dat dat;
-
-    get_size_vcf(pheno_path.c_str(), vcf_path.c_str(), &dat);
-    
-    read_pheno(pheno_path.c_str(), &dat);
-
-    read_cov(covar_path.c_str(), &dat);
-
-    process_cov(&dat);
-
-    read_lanc(vcf_path.c_str(), msp_path.c_str(), anc, &dat, out_path.c_str());
-
-    free(dat.pheno);
-    free(dat.Qty);
-    free(dat.tau);
-    free(dat.work);
-    return 0;
-}
