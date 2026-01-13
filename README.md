@@ -22,9 +22,9 @@ LAI_regress takes whole genome phased genotype and local ancestry files as the i
 Below are the required options.
 
 - vcf (required): Path to the phased genotype file in the gzipped vcf format. Not that currently missing genotypes are not supported. If you use Eagle2 for phasing, there shouldn't be missing genotype in the default setting.
-- msp (required): Path to the whole genome solved local ancestry files.
-- pheno (required): path to the phenotype file. The phenotype will be read from the 3rd column of the specified space- or tab-delimited file. There is no header and NA value can be included.
-- covar (required): path to the covariate file. Covariates will be reading from the first column. There is no header for the covariate file.
+- msp (required): Path to the whole genome solved local ancestry files in the msp format.
+- pheno (required): Path to the phenotype file. The phenotype will be read from the 3rd column of the specified space- or tab-delimited file. There is no header and NA value can be included.
+- covar (required): Path to the covariate file. Covariates will be reading from the first column. There is no header for the covariate file.
 - out (required): Path to the output file.
 
 The output file has the following format:
