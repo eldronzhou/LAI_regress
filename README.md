@@ -1,2 +1,2 @@
 # LAI_regress
-Whole Genome Local Ancestry Regression
+Efficient Whole Genome Local Ancestry Regression 
