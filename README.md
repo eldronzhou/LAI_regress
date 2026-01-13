@@ -25,4 +25,4 @@ Below are the required options.
 - msp (required): Path to path to the whole genome solved local ancestry files.
 - pheno (required): path to the phenotype file. The phenotype will be read from the 3rd column of the specified space- or tab-delimited file. There is no header and NA value can be included.
 - covar (required): path to the covariate file. Covariates will be reading from the first column. There is no header for the covariate file.
-- out (required): Path to the output file containing summary sizes.
+- out (required): Path to the output file.
