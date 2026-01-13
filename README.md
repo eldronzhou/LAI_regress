@@ -13,7 +13,7 @@ You can then compile LAI_regress by running `make`. Make sure you have openblas 
 
 ## Running whole genome regression
 
-LAI_regress takes phased whole genome genotype and local ancestry files as the input, and perform regression for local ancestry resolved association. It scales efficiently on All of Us, capable of analyzing 9 million variants for 75,000 African Americans within hours and the cost of fewer than $2 per trait. 
+LAI_regress takes whole genome phased genotype and local ancestry files as the input, and perform local ancestry based association between genotype and phenotype. It scales efficiently on All of Us, capable of analyzing 9 million common variants for 70,000 African Americans within hours, at the cost of fewer than $2 per trait. 
 
 ```bash
 ./lai_regress -vcf path_to_phased.vcf.gz -msp path_to_lai.msp -pheno path_to_pheno.txt -covar path_to_covar.txt -out path_to_out.txt
