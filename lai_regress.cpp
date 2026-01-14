@@ -383,7 +383,7 @@ void read_lanc(const std::string &vcf_path,  const std::string &msp_path, int an
             << "beta1" << "\t" << "se1" << "\t" << "beta2" << "\t" << "se2" << "\t" \
             << "p1" << "\t" << "p2" << "\t" << "se_diff" << "\t" << "p_diff" << endl;
     for (size_t i=0; i<dat->n_snp; i++) {    
-        out << dat->id[i] << "\t" << dat->chr[i] << dat->pos[i] << "\t" << "\t" << dat->ref[i] << "\t" \
+        out << dat->id[i] << "\t" << dat->chr[i] << "\t" << dat->pos[i] << "\t" << dat->ref[i] << "\t" \
         << dat->alt[i] << "\t" << dat->beta1[i] << "\t" << dat->se1[i] << "\t" << dat->beta2[i] \
 	<< "\t" << dat->se2[i] << "\t" << dat->p1[i] << "\t" << dat->p2[i] << "\t" << \
 	dat->se_diff[i] << "\t" << dat->p_diff[i] << endl;
