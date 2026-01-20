@@ -1,5 +1,6 @@
 #include "lai_regress.h"
 #include "linear.h"
+#include "logistic.h"
 #include <assert.h>
 #include <sstream>
 #include <cstdio>
@@ -140,7 +141,7 @@ void read_cov(const std::string &cov_path,  Dat *dat) {
     infile.close();
 }
 
-void read_lanc(const std::string &vcf_path,  const std::string &msp_path, int anc, Dat *dat, const std::string &out_path) {
+void read_lanc(const std::string &vcf_path,  const std::string &msp_path, int anc, Dat *dat, const std::string &out_path, int glm) {
     
     string line1, line2;
     string token1, token2;
@@ -309,22 +310,26 @@ void read_lanc(const std::string &vcf_path,  const std::string &msp_path, int an
 		}
 	    }
 
-	    /*if (idx_snp == 786) {
+	    if (idx_snp == 123429) {
 	       std::ofstream out("./X.txt");
 	       for (size_t i=0; i<2*dat->n_ind; i++) {
 		       out << X[i] << " " << endl;
 	       }
 	       cout << "Done!" << endl;
 	       out.close();
-	       memcpy(Xr, X, 2*dat->n_ind*sizeof(double));
+	       /*memcpy(Xr, X, 2*dat->n_ind*sizeof(double));
 	       linear(dat, X, Xr);
-	       return;
-	    }*/
-
-	    memcpy(Xr, X, 2*dat->n_ind*sizeof(double));
+	       return;*/
+	    }
 
 	    //regress here
-	    linear(dat, X, Xr);
+	    if (glm) {
+	        logistic(dat, X);
+	    }
+	    else {
+		memcpy(Xr, X, 2*dat->n_ind*sizeof(double));
+	        linear(dat, X, Xr);
+	    }
 
 	    if (idx_snp % 10000 == 0) {
                cout << idx_snp << endl;
@@ -380,11 +385,12 @@ void read_lanc(const std::string &vcf_path,  const std::string &msp_path, int an
     // write to the output
     std::ofstream out(out_path);
     out << "id" << "\t" << "chr" << "\t" << "pos" << "\t" << "ref" << "\t" << "alt" << "\t" \
-            << "beta1" << "\t" << "se1" << "\t" << "beta2" << "\t" << "se2" << "\t" \
+            << "mac1" << "\t" << "mac2" << "\t" << "beta1" << "\t" << "se1" << "\t" << "beta2" << "\t" << "se2" << "\t" \
             << "p1" << "\t" << "p2" << "\t" << "se_diff" << "\t" << "p_diff" << endl;
     for (size_t i=0; i<dat->n_snp; i++) {    
         out << dat->id[i] << "\t" << dat->chr[i] << "\t" << dat->pos[i] << "\t" << dat->ref[i] << "\t" \
-        << dat->alt[i] << "\t" << dat->beta1[i] << "\t" << dat->se1[i] << "\t" << dat->beta2[i] \
+        << dat->alt[i] << "\t" << dat->mac1[i] << "\t" << dat->mac2[i] << "\t" << dat->beta1[i] << "\t" << \
+	dat->se1[i] << "\t" << dat->beta2[i] \
 	<< "\t" << dat->se2[i] << "\t" << dat->p1[i] << "\t" << dat->p2[i] << "\t" << \
 	dat->se_diff[i] << "\t" << dat->p_diff[i] << endl;
     }
@@ -395,7 +401,7 @@ int main(int argc, char *argv[]) {
 
     std::string vcf_path, pheno_path, covar_path, msp_path, out_path;
 
-    int i = 1, anc = 0;
+    int i = 1, anc = 0, glm = 0;
     while (i < argc) {
         if (strcmp(argv[i], "-vcf") == 0) {
             vcf_path = argv[i+1];
@@ -417,7 +423,11 @@ int main(int argc, char *argv[]) {
             msp_path = argv[i+1];
             i += 2;
         }
-        else if (strcmp(argv[i], "-out") == 0) {
+        else if (strcmp(argv[i], "-glm") == 0) {
+	    glm = 1;
+	    i += 1;
+	}
+	else if (strcmp(argv[i], "-out") == 0) {
             out_path = argv[i+1];
             i += 2;
         }
@@ -435,13 +445,37 @@ int main(int argc, char *argv[]) {
 
     read_cov(covar_path.c_str(), &dat);
 
-    process_cov(&dat);
+    if (glm) {
+	fit_cov(&dat);
+    }
+    else {
+        process_cov(&dat);
+    }
 
-    read_lanc(vcf_path.c_str(), msp_path.c_str(), anc, &dat, out_path.c_str());
+    read_lanc(vcf_path.c_str(), msp_path.c_str(), anc, &dat, out_path.c_str(), glm);
 
     free(dat.pheno);
-    free(dat.Qty);
-    free(dat.tau);
-    free(dat.work);
+    free(dat.W);
+    
+    if (!glm) {
+        free(dat.Qty);
+        free(dat.tau);
+        free(dat.work);
+        free(dat.QtX);
+        free(dat.XtX);
+        free(dat.Xty);
+        free(dat.tau);
+        free(dat.work);
+    }
+    else {
+	free(dat.eta);
+	free(dat.mu);
+	free(dat.weight);
+	free(dat.z);
+	free(dat.X);
+	free(dat.XtWX);
+	free(dat.XtWz);
+	free(dat.beta);
+    }
     return 0;
 }
