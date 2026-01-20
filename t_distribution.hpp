@@ -81,53 +81,46 @@ inline double cdf(double t, double nu) {
     return (t > 0.0) ? 1.0 - 0.5 * ib : 0.5 * ib;
 }
 
-// Complementary CDF (P(T > t))
-inline double ccdf(double t, double nu) {
-    return 1.0 - cdf(t, nu);
-}
-
 // Two-tailed p-value
+inline double t_upper_tail(double t, double nu) {
+    if (nu <= 0.0) return std::numeric_limits<double>::quiet_NaN();
+    if (t < 0.0) return 1.0 - t_upper_tail(-t, nu);
+
+    double x = nu / (t * t + nu);
+    return 0.5 * incbeta(x, nu / 2.0, 0.5);
+}
+
 inline double two_tailed_p(double t, double nu) {
-    double c = cdf(t, nu);
-    double cc = 1.0 - c;
-    return 2.0 * std::min(c, cc);
+    return 2.0 * t_upper_tail(std::fabs(t), nu);
 }
 
-// PDF of chi-square distribution
-inline double chi2_pdf(double x, double k) {
-    if (x < 0.0 || k <= 0.0) return 0.0;
-    double coef = 1.0 / (std::pow(2.0, k/2.0) * std::tgamma(k/2.0));
-    return coef * std::pow(x, k/2.0 - 1.0) * std::exp(-x/2.0);
-}
-
-// Regularized lower incomplete gamma function P(a, x)
-inline double gammainc_lower(double a, double x) {
+inline double gammainc_upper(double a, double x) {
     if (x < 0.0 || a <= 0.0) return std::numeric_limits<double>::quiet_NaN();
-    if (x == 0.0) return 0.0;
-    double sum = 1.0 / a;
-    double term = 1.0 / a;
-    for (int n = 1; n < MAX_ITER; ++n) {
-        term *= x / (a + n);
-        sum += term;
-        if (term < EPS) break;
+
+    double b = x + 1.0 - a;
+    double c = 1.0 / 1e-30;
+    double d = 1.0 / b;
+    double h = d;
+
+    for (int i = 1; i < MAX_ITER; ++i) {
+        double an = -i * (i - a);
+        b += 2.0;
+        d = an * d + b;
+        if (std::fabs(d) < 1e-30) d = 1e-30;
+        c = b + an / c;
+        if (std::fabs(c) < 1e-30) c = 1e-30;
+        d = 1.0 / d;
+        double delta = d * c;
+        h *= delta;
+        if (std::fabs(delta - 1.0) < EPS) break;
     }
-    return sum * std::exp(-x + a * std::log(x) - std::lgamma(a));
+
+    return std::exp(-x + a * std::log(x) - std::lgamma(a)) * h;
 }
 
-// CDF of chi-square distribution
-inline double chi2_cdf(double x, double k) {
-    if (x < 0.0 || k <= 0.0) return 0.0;
-    return gammainc_lower(k / 2.0, x / 2.0);
-}
-
-// CCDF
-inline double chi2_ccdf(double x, double k) {
-    return 1.0 - chi2_cdf(x, k);
-}
-
-// Upper-tail probability (for p-value)
 inline double chi2_pvalue(double x, double k) {
-    return chi2_ccdf(x, k);
+    if (x < 0.0 || k <= 0.0) return 1.0;
+    return gammainc_upper(k / 2.0, x / 2.0);
 }
 
 } // namespace t_distribution

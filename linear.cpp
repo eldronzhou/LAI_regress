@@ -162,7 +162,7 @@ void linear(Dat *dat, double *X, double *Xr) {
 
     double t1 = beta1 / se1;
     double t2 = beta2 / se2;
-    double p1 = t_distribution::two_tailed_p(t1, nu); 
+    double p1 = t_distribution::two_tailed_p(t1, nu);
     double p2 = t_distribution::two_tailed_p(t2, nu);
     double diff = beta1 - beta2;
     double se_diff = sqrt(sigma2 * (a + d + b + c) / det);
