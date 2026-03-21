@@ -355,12 +355,12 @@ void logistic(Dat *dat, double *X) {
         mac2 += X[n+i];
     }
     
-    if (mac1 > n / 2) {
-        mac1 = n - mac1;
+    if (mac1 > dat->n_anc1/2) {
+        mac1 = dat->n_anc1 - mac1;
     }
 
-    if (mac1 > n / 2) {
-        mac2 = n - mac2;
+    if (mac2 > dat->n_anc2 / 2) {
+        mac2 = dat->n_anc2 - mac2;
     }
 
     if (mac1 >= 400 && mac2 >= 400) {

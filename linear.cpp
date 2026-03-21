@@ -111,13 +111,13 @@ void linear(Dat *dat, double *X, double *Xr) {
         mac2 += X[n+i];
     }
     
-    if (mac1 > n / 2) {
-        mac1 = n - mac1;
+    if (mac1 > dat->n_anc1 / 2) {
+        mac1 = dat->n_anc1 - mac1;
     }
 
       
-    if (mac1 > n / 2) {
-        mac2 = n - mac2;
+    if (mac2 > dat->n_anc2 / 2) {
+        mac2 = dat->n_anc2 - mac2;
     }
 
     double beta1 = 0, beta2 = 0;
@@ -169,6 +169,8 @@ void linear(Dat *dat, double *X, double *Xr) {
     double z_diff = diff / se_diff;
     double p_diff = t_distribution::chi2_pvalue(z_diff*z_diff, 1);
 
+    dat->mac1.push_back(mac1);
+    dat->mac2.push_back(mac2);
     dat->beta1.push_back(beta1);
     dat->se1.push_back(se1);
     dat->beta2.push_back(beta2);

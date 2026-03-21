@@ -295,32 +295,36 @@ void read_lanc(const std::string &vcf_path,  const std::string &msp_path, int an
 		    }
 		    if (hap_lanc[2*(idx2-9)] == anc) {
 			X[k] += std::stod(&token2[0]);
+			dat->n_anc1++;
 		    }
 		    else {
 			X[dat->n_ind+k] += std::stod(&token2[0]);
+			dat->n_anc2++;
 		    }
 
 		    if (hap_lanc[2*(idx2-9)+1] == anc) {
 			X[k] += std::stod(&token2[2]);
+			dat->n_anc1++;
 		    }
 		    else  {
 			X[dat->n_ind+k] += std::stod(&token2[2]);
+			dat->n_anc2++;
 		    }
 		    k++;
 		}
 	    }
 
-	    if (idx_snp == 123429) {
+	    /*if (idx_snp == 123429) {
 	       std::ofstream out("./X.txt");
 	       for (size_t i=0; i<2*dat->n_ind; i++) {
 		       out << X[i] << " " << endl;
 	       }
 	       cout << "Done!" << endl;
 	       out.close();
-	       /*memcpy(Xr, X, 2*dat->n_ind*sizeof(double));
+	       memcpy(Xr, X, 2*dat->n_ind*sizeof(double));
 	       linear(dat, X, Xr);
-	       return;*/
-	    }
+	       return;
+	    }*/
 
 	    //regress here
 	    if (glm) {
@@ -366,6 +370,8 @@ void read_lanc(const std::string &vcf_path,  const std::string &msp_path, int an
 			pos = std::stoul(token2);
 		    }
 		}
+		dat->n_anc1 = 0;
+		dat->n_anc2 = 0;
 		idx_snp++;
 	    }
 	    else {
@@ -458,12 +464,7 @@ int main(int argc, char *argv[]) {
     free(dat.W);
     
     if (!glm) {
-        free(dat.Qty);
-        free(dat.tau);
-        free(dat.work);
-        free(dat.QtX);
-        free(dat.XtX);
-        free(dat.Xty);
+	free(dat.Qty);
         free(dat.tau);
         free(dat.work);
     }
